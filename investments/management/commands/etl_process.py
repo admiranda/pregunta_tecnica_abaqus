@@ -1,82 +1,33 @@
 import pandas as pd
 from django.core.management.base import BaseCommand
-from investments.models import Asset, Portfolio, PortfolioAssetHolding, Price
-from django.db import transaction
-from datetime import datetime
+from investments.models import Asset, Portfolio, Price
 
 class Command(BaseCommand):
-    help = "Load portfolios, assets, weights, and prices from datos.xlsx"
+    help = "Importa datos desde datos.xlsx a la base de datos."
 
-    def add_arguments(self, parser):
-        parser.add_argument('--file', type=str, default='datos.xlsx')
-
-    @transaction.atomic
     def handle(self, *args, **options):
-        file_path = options['file']
-        print(f"Reading from {file_path}...")
+        weights = pd.read_excel("abaqus_portfolio/data/datos.xlsx", sheet_name="weights")
+        prices = pd.read_excel("abaqus_portfolio/data/datos.xlsx", sheet_name="Precios", index_col=0)
+        portfolio_cols = [col for col in weights.columns if col.lower().startswith('portafolio')]
+        unpivoted_weights = weights.melt(id_vars=['Fecha'], value_vars=portfolio_cols, var_name='Portfolio', value_name='Weight')
+        unpivoted_weights.rename(columns={'Fecha': 'Date'}, inplace=True)
+        unpivoted_prices = prices.melt(ignore_index=False, var_name='Asset', value_name='Price')
+        unpivoted_prices.index.name = 'Date'
 
-        # Leer hojas de Excel
-        df_weights = pd.read_excel(file_path, sheet_name='Weights')
-        df_prices = pd.read_excel(file_path, sheet_name='Precios', index_col=0)
+        # Assets
+        for asset_name in unpivoted_prices['Asset'].unique():
+            asset, created = Asset.objects.get_or_create(name=asset_name)
+            self.stdout.write(f"{'Created' if created else 'Exists'} asset: {asset_name}")
 
-        # Normalizar nombres de activos
-        asset_names = list(df_weights['Asset'])
-        assets = {}
-        for name in asset_names:
-            asset, _ = Asset.objects.get_or_create(name=name)
-            assets[name] = asset
+        # Portfolios
+        for portfolio_name in unpivoted_weights['Portfolio'].unique():
+            portfolio, created = Portfolio.objects.get_or_create(name=portfolio_name)
+            self.stdout.write(f"{'Created' if created else 'Exists'} portfolio: {portfolio_name}")
 
-        # Crear portafolios
-        portfolios = {}
-        for i in [1, 2]:
-            pf, _ = Portfolio.objects.get_or_create(
-                name=f"Portfolio {i}",
-                defaults={"initial_value": 1_000_000_000}
-            )
-            portfolios[i] = pf
+        # Prices
+        for index, row in unpivoted_prices.iterrows():
+            asset = Asset.objects.get(name=row['Asset'])
+            price, created = Price.objects.get_or_create(asset=asset, date=index, defaults={'price': row['Price']})
+            self.stdout.write(f"{'Created' if created else 'Exists'} price for {asset.name} on {index}: {row['Price']}")
 
-        # Crear holdings (pesos iniciales)
-        for idx, row in df_weights.iterrows():
-            for i in [1, 2]:
-                asset = assets[row['Asset']]
-                weight = row[f'Portfolio_{i}']
-                holding, _ = PortfolioAssetHolding.objects.get_or_create(
-                    portfolio=portfolios[i],
-                    asset=asset,
-                    defaults={
-                        "initial_weight": weight,
-                        "initial_quantity": None,
-                    }
-                )
-                # Si ya existe, actualiza peso
-                if not holding.initial_weight == weight:
-                    holding.initial_weight = weight
-                    holding.save()
-
-        # Cargar precios
-        for asset_name in df_prices.columns:
-            asset = assets[asset_name]
-            for date_str, price in df_prices[asset_name].items():
-                if pd.isna(price):
-                    continue
-                # Si la fecha viene como string, conviértela
-                if not isinstance(date_str, datetime):
-                    date = pd.to_datetime(date_str).date()
-                else:
-                    date = date_str.date()
-                Price.objects.update_or_create(
-                    asset=asset, date=date, defaults={'price': price}
-                )
-
-        # Calcular cantidades iniciales usando precios al 15/02/2022
-        price_date = datetime.strptime('2022-02-15', '%Y-%m-%d').date()
-        for i in [1, 2]:
-            pf = portfolios[i]
-            for holding in PortfolioAssetHolding.objects.filter(portfolio=pf):
-                price_obj = Price.objects.get(asset=holding.asset, date=price_date)
-                # Formula: C_{i,0} = (w_{i,0} * V_0) / P_{i,0}
-                qty = (holding.initial_weight * pf.initial_value) / price_obj.price
-                holding.initial_quantity = qty
-                holding.save()
-
-        print("Data import completed successfully!")
+        self.stdout.write(self.style.SUCCESS('Importación completada.'))
