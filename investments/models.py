@@ -36,3 +36,11 @@ class PortfolioAssetHolding(models.Model):
 
     def __str__(self):
         return f"{self.portfolio.name} - {self.asset.name}: {self.initial_weight:.2%} ({self.initial_quantity:.4f})"
+
+class Operation(models.Model):
+    portfolio = models.ForeignKey(Portfolio, on_delete=models.CASCADE)
+    asset = models.ForeignKey(Asset, on_delete=models.CASCADE)
+    date = models.DateField()
+    amount_usd = models.FloatField(help_text="Monto comprado (+) o vendido (-) en USD")
+    # Se puede calcular la cantidad comprada/vendida usando el precio del día
+    notes = models.TextField(blank=True)

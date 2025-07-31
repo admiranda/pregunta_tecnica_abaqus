@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Dashboard Portafolios</title>
+  <style>
+    body {
+      margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif;
+      background: #e8eaf6;
+    }
+    .section {
+      min-height: 70vh;
+      padding: 40px 0 30px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .section-azul {
+      background: #1a237e;
+      color: #fff;
+    }
+    .section-clara {
+      background: #f5f5f5;
+      color: #1a237e;
+    }
+    h1, h2 {
+      margin-top: 0;
+      font-weight: 600;
+    }
+    h1 { font-size: 2.7em; letter-spacing: -1px; }
+    h2 { font-size: 2em; margin-bottom: 12px; }
+    .tabla-portafolios table,
+    .tabla-portafolios th,
+    .tabla-portafolios td {
+      border: 1px solid #b3b3cc;
+      border-collapse: collapse;
+      padding: 8px 12px;
+    }
+    /* -------- Cambios para que la tabla sea visible en azul -------- */
+    .section-azul table,
+    .section-azul th,
+    .section-azul td {
+      color: #fff;
+      background: #243080;
+    }
+    .section-azul th {
+      background: #2a368c;
+    }
+    /* --------------------------------------------------------------- */
+    .tabla-portafolios table {
+      margin-top: 12px; margin-bottom: 8px;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(30,30,70,0.06);
+    }
+    .input-row {
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .ver-btn {
+      background: #3949ab;
+      color: #fff;
+      border: none;
+      padding: 7px 18px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .ver-btn:hover {
+      background: #263174;
+    }
+    @media (max-width: 700px) {
+      .section { padding: 20px 0; }
+      h1 { font-size: 2em; }
+      h2 { font-size: 1.3em; }
+      .tabla-portafolios table, .tabla-portafolios th, .tabla-portafolios td {
+        font-size: 0.95em;
+        padding: 4px 5px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Sección 1: Portafolios (azul oscuro) -->
+  <div class="section section-azul" id="pregunta-1">
+    <h1>Portafolios - Consulta de Valores</h1>
+    <h2>Consulta el valor en USD por activo y portafolio para una fecha dada</h2>
+    <div class="tabla-portafolios">
+      <ul style="list-style: none; padding-left: 0;">
+        {% for portfolio in portfolios %}
+          <li>
+            <div class="input-row">
+              <strong>{{ portfolio.name }}</strong>
+              <span>Fecha:</span>
+              <input type="date" id="date-{{ portfolio.id }}" value="2022-02-15">
+              <button class="ver-btn" onclick="consultarAPI('{{ portfolio.name|escapejs }}', '{{ portfolio.id }}')">
+                Ver valores
+              </button>
+            </div>
+            <div class="valores" id="valores-{{ portfolio.id }}"></div>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <!-- Sección 2: Ejemplo de siguiente pregunta (color claro) -->
+  <div class="section section-clara" id="pregunta-2">
+    <h2>Próxima pregunta: evolución temporal (ejemplo)</h2>
+    <p style="max-width: 600px;">Aquí puedes agregar la explicación y los controles para la segunda pregunta (por ejemplo, evolución temporal de los pesos, gráficos, otro análisis, etc.). Puedes copiar este bloque y cambiar el contenido para cada nueva sección.</p>
+  </div>
+
+  <script>
+  function consultarAPI(portfolioName, portfolioId) {
+    const dateInput = document.getElementById(`date-${portfolioId}`);
+    const fecha = dateInput.value;
+    fetch(`/api/portfolio_usd_values/?portfolio=${encodeURIComponent(portfolioName)}&date=${fecha}`)
+      .then(resp => resp.json())
+      .then(data => {
+        const div = document.getElementById(`valores-${portfolioId}`);
+        if (!data.length) {
+          div.innerHTML = '<em>No hay datos disponibles para la fecha seleccionada.</em>';
+          return;
+        }
+        let tabla = `
+          <table>
+            <tr>
+              <th>Activo</th>
+              <th>Cantidad</th>
+              <th>Precio</th>
+              <th>USD</th>
+            </tr>
+        `;
+        data.forEach(row => {
+          tabla += `<tr>
+            <td>${row.asset}</td>
+            <td>${parseFloat(row.quantity).toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+            <td>${row.price !== null ? row.price.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }) : ''}</td>
+            <td>${row.usd_amount !== null ? row.usd_amount.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }) : ''}</td>
+          </tr>`;
+        });
+        const total = data.reduce((acc, row) => acc + (row.usd_amount || 0), 0);
+        tabla += `</table>
+        <div style="margin-top:4px;">
+          <strong>Total portafolio:</strong>
+          ${total.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })}
+        </div>
+        `;
+        div.innerHTML = tabla;
+      })
+      .catch(() => {
+        const div = document.getElementById(`valores-${portfolioId}`);
+        div.innerHTML = '<em>Error consultando el API.</em>';
+      });
+  }
+  </script>
+</body>
+</html>
