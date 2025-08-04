@@ -16,11 +16,13 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from investments.views import PortfolioUSDValuesView
+from investments.views import PortfolioUSDValuesView, PortfolioTimeSeriesView, AvailableDatesView
 from investments.views import home
 
 urlpatterns = [
     path('home/', home, name='home'),
     path('admin/', admin.site.urls),
-    path('api/portfolio_usd_values/', PortfolioUSDValuesView    .as_view())
+    path('api/portfolio_usd_values/', PortfolioUSDValuesView.as_view()),
+    path('api/portfolio_time_series/', PortfolioTimeSeriesView.as_view()),
+    path("api/available_dates/", AvailableDatesView.as_view(), name="available_dates")
 ]

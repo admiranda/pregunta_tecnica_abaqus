@@ -2,6 +2,9 @@
 <html>
 <head>
   <title>Dashboard Portafolios</title>
+  <meta charset="utf-8" />
+  <!-- Flatpickr CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <style>
     body {
       margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif;
@@ -28,6 +31,7 @@
     }
     h1 { font-size: 2.7em; letter-spacing: -1px; }
     h2 { font-size: 2em; margin-bottom: 12px; }
+
     .tabla-portafolios table,
     .tabla-portafolios th,
     .tabla-portafolios td {
@@ -35,7 +39,6 @@
       border-collapse: collapse;
       padding: 8px 12px;
     }
-    /* -------- Cambios para que la tabla sea visible en azul -------- */
     .section-azul table,
     .section-azul th,
     .section-azul td {
@@ -45,7 +48,6 @@
     .section-azul th {
       background: #2a368c;
     }
-    /* --------------------------------------------------------------- */
     .tabla-portafolios table {
       margin-top: 12px; margin-bottom: 8px;
       border-radius: 8px;
@@ -70,6 +72,30 @@
     .ver-btn:hover {
       background: #263174;
     }
+
+    .chart-container {
+      width: 100%;
+      max-width: 900px;
+      margin-top: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      margin-bottom: 8px;
+    }
+    .small-label {
+      font-size: 0.9em;
+      margin-right: 4px;
+    }
+    #error-timeseries {
+      color: #b00020;
+      margin-top: 8px;
+    }
     @media (max-width: 700px) {
       .section { padding: 20px 0; }
       h1 { font-size: 2em; }
@@ -78,13 +104,18 @@
         font-size: 0.95em;
         padding: 4px 5px;
       }
+      .controls { flex-direction: column; align-items: flex-start; }
     }
   </style>
+
+  <!-- Chart.js + flatpickr desde CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 </head>
 <body>
   <!-- Sección 1: Portafolios (azul oscuro) -->
   <div class="section section-azul" id="pregunta-1">
-    <h1>Portafolios - Consulta de Valores</h1>
+    <h1>Pregunta 1</h1>
     <h2>Consulta el valor en USD por activo y portafolio para una fecha dada</h2>
     <div class="tabla-portafolios">
       <ul style="list-style: none; padding-left: 0;">
@@ -105,13 +136,97 @@
     </div>
   </div>
 
-  <!-- Sección 2: Ejemplo de siguiente pregunta (color claro) -->
+  <!-- Sección 2: Evolución temporal -->
   <div class="section section-clara" id="pregunta-2">
-    <h2>Próxima pregunta: evolución temporal (ejemplo)</h2>
-    <p style="max-width: 600px;">Aquí puedes agregar la explicación y los controles para la segunda pregunta (por ejemplo, evolución temporal de los pesos, gráficos, otro análisis, etc.). Puedes copiar este bloque y cambiar el contenido para cada nueva sección.</p>
+    <h2>Pregunta 2: Evolución temporal de \( w_{i,t} \) y \( V_t \)</h2>
+    <p style="max-width: 600px;">
+      Aquí puedes comparar la evolución de los pesos relativos \( w_{i,t} \) (stacked area con gradiente) y el valor total del portafolio \( V_t \) (línea) entre dos fechas existentes.
+    </p>
+
+    <div class="controls">
+      <div>
+        <div class="small-label">Portafolio:</div>
+        <select id="portfolio-select">
+          {% for portfolio in portfolios %}
+            <option value="{{ portfolio.name|escapejs }}">{{ portfolio.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <div class="small-label">Fecha inicio:</div>
+        <input id="fecha-inicio" placeholder="YYYY-MM-DD" readonly style="cursor:pointer;">
+      </div>
+      <div>
+        <div class="small-label">Fecha fin:</div>
+        <input id="fecha-fin" placeholder="YYYY-MM-DD" readonly style="cursor:pointer;">
+      </div>
+      <div>
+        <button class="ver-btn" onclick="fetchTimeSeries()">Ver evolución</button>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div>
+        <h3 style="margin-bottom:4px;">Pesos relativos \( w_{i,t} \) (stacked area)</h3>
+        <canvas id="weights-chart" height="120"></canvas>
+      </div>
+      <div>
+        <h3 style="margin-bottom:4px;">Valor total \( V_t \) (línea)</h3>
+        <canvas id="value-chart" height="80"></canvas>
+      </div>
+    </div>
+
+    <div id="error-timeseries"></div>
   </div>
 
   <script>
+  let availableDates = [];
+  let availableDatesSet = new Set();
+  let fpStart = null;
+  let fpEnd = null;
+
+  async function initDateSlicer() {
+    try {
+      const resp = await fetch("/api/available_dates/");
+      if (!resp.ok) throw new Error("No se pudo obtener las fechas disponibles.");
+      const { available } = await resp.json();
+
+      availableDates = available; // array de strings YYYY-MM-DD
+      availableDatesSet = new Set(availableDates);
+
+      // inicializar flatpickr con enable = lista exacta
+      fpStart = flatpickr("#fecha-inicio", {
+        dateFormat: "Y-m-d",
+        enable: availableDates,
+        defaultDate: availableDates[0],
+        onChange: validateRange,
+        maxDate: availableDates[availableDates.length - 1],
+        minDate: availableDates[0]
+      });
+      fpEnd = flatpickr("#fecha-fin", {
+        dateFormat: "Y-m-d",
+        enable: availableDates,
+        defaultDate: availableDates[availableDates.length - 1],
+        onChange: validateRange,
+        maxDate: availableDates[availableDates.length - 1],
+        minDate: availableDates[0]
+      });
+    } catch (e) {
+      console.error("initDateSlicer error:", e);
+      document.getElementById("error-timeseries").textContent = "No se pudieron cargar las fechas disponibles.";
+    }
+  }
+
+  function validateRange(selectedDates, dateStr, instance) {
+    const start = document.getElementById("fecha-inicio").value;
+    const end = document.getElementById("fecha-fin").value;
+    if (start && end && start > end) {
+      document.getElementById("error-timeseries").textContent = "fecha_inicio no puede ser posterior a fecha_fin.";
+    } else {
+      document.getElementById("error-timeseries").textContent = "";
+    }
+  }
+
   function consultarAPI(portfolioName, portfolioId) {
     const dateInput = document.getElementById(`date-${portfolioId}`);
     const fecha = dateInput.value;
@@ -119,7 +234,7 @@
       .then(resp => resp.json())
       .then(data => {
         const div = document.getElementById(`valores-${portfolioId}`);
-        if (!data.length) {
+        if (!Array.isArray(data) || data.length === 0) {
           div.innerHTML = '<em>No hay datos disponibles para la fecha seleccionada.</em>';
           return;
         }
@@ -135,7 +250,7 @@
         data.forEach(row => {
           tabla += `<tr>
             <td>${row.asset}</td>
-            <td>${parseFloat(row.quantity).toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+            <td>${parseFloat(row.quantity || 0).toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
             <td>${row.price !== null ? row.price.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }) : ''}</td>
             <td>${row.usd_amount !== null ? row.usd_amount.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }) : ''}</td>
           </tr>`;
@@ -145,8 +260,7 @@
         <div style="margin-top:4px;">
           <strong>Total portafolio:</strong>
           ${total.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })}
-        </div>
-        `;
+        </div>`;
         div.innerHTML = tabla;
       })
       .catch(() => {
@@ -154,6 +268,179 @@
         div.innerHTML = '<em>Error consultando el API.</em>';
       });
   }
+
+  function colorFromInitialWeight(initialWeight, baseHue) {
+    const lightness = 70 - (initialWeight * 40);
+    return `hsl(${baseHue}, 60%, ${lightness}%)`;
+  }
+
+  async function fetchTimeSeries() {
+    const portfolioName = document.getElementById("portfolio-select").value;
+    const fechaInicio = document.getElementById("fecha-inicio").value;
+    const fechaFin = document.getElementById("fecha-fin").value;
+    const errorDiv = document.getElementById("error-timeseries");
+    errorDiv.textContent = "";
+
+    if (!portfolioName || !fechaInicio || !fechaFin) {
+      errorDiv.textContent = "Todos los campos son requeridos.";
+      return;
+    }
+    if (!availableDatesSet.has(fechaInicio) || !availableDatesSet.has(fechaFin)) {
+      errorDiv.textContent = "Fecha inválida: selecciona una de las existentes.";
+      return;
+    }
+    if (fechaInicio > fechaFin) {
+      errorDiv.textContent = "fecha_inicio no puede ser posterior a fecha_fin.";
+      return;
+    }
+
+    try {
+      const resp = await fetch(`/api/portfolio_time_series/?portfolio=${encodeURIComponent(portfolioName)}&fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}`);
+      const data = await resp.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        errorDiv.textContent = "No hay datos para el rango seleccionado.";
+        return;
+      }
+
+      const dates = data.map(d => d.date);
+      const assetNames = Array.from(new Set(data.flatMap(d => d.assets.map(a => a.asset))));
+      const wSeriesByAsset = {};
+      assetNames.forEach(name => wSeriesByAsset[name] = []);
+      const Vt = [];
+
+      data.forEach(point => {
+        Vt.push(point.V_t);
+        const assetsMap = {};
+        point.assets.forEach(a => {
+          assetsMap[a.asset] = a.w_it !== null ? a.w_it : 0;
+        });
+        assetNames.forEach(name => {
+          wSeriesByAsset[name].push(assetsMap[name] ?? 0);
+        });
+      });
+
+      const initialWeights = {};
+      if (data.length > 0) {
+        const first = data[0];
+        first.assets.forEach(a => {
+          initialWeights[a.asset] = a.w_it ?? 0;
+        });
+      }
+
+      // stacked area con gradiente
+      const weightsCtx = document.getElementById("weights-chart").getContext("2d");
+      if (window.weightsChart) window.weightsChart.destroy();
+
+      const weightDatasets = assetNames.map((name, idx) => {
+        const baseHue = (idx * 360 / assetNames.length) % 360;
+        const initialWeight = initialWeights[name] ?? 0;
+
+        const gradient = weightsCtx.createLinearGradient(0, 0, 0, 120);
+        const darker = colorFromInitialWeight(initialWeight, baseHue);
+        const lighter = `hsl(${baseHue}, 60%, 85%)`;
+        gradient.addColorStop(0, darker);
+        gradient.addColorStop(1, lighter);
+
+        return {
+          label: name,
+          data: wSeriesByAsset[name],
+          fill: idx === 0 ? "origin" : "-1",
+          tension: 0.4,
+          borderWidth: 1,
+          spanGaps: true,
+          backgroundColor: gradient,
+          borderColor: `hsl(${baseHue}, 60%, 40%)`,
+          pointRadius: 0
+        };
+      });
+
+      window.weightsChart = new Chart(weightsCtx, {
+        type: "line",
+        data: {
+          labels: dates,
+          datasets: weightDatasets
+        },
+        options: {
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const val = ctx.parsed.y;
+                  return `${ctx.dataset.label}: ${(val * 100).toFixed(2)}%`;
+                }
+              }
+            },
+            legend: { position: "bottom" }
+          },
+          scales: {
+            y: {
+              stacked: true,
+              ticks: {
+                callback: v => `${(v * 100).toFixed(0)}%`
+              },
+              title: { display: true, text: "Peso relativo" }
+            },
+            x: {
+              title: { display: true, text: "Fecha" }
+            }
+          }
+        }
+      });
+
+      // V_t
+      const valueCtx = document.getElementById("value-chart").getContext("2d");
+      if (window.valueChart) window.valueChart.destroy();
+      window.valueChart = new Chart(valueCtx, {
+        type: "line",
+        data: {
+          labels: dates,
+          datasets: [{
+            label: "V_t (USD)",
+            data: Vt,
+            borderWidth: 2,
+            fill: false,
+            tension: 0.2,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const val = ctx.parsed.y;
+                  return `V_t: ${Number(val).toLocaleString("en-US", { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })}`;
+                }
+              }
+            },
+            legend: { display: false }
+          },
+          scales: {
+            y: {
+              title: { display: true, text: "Valor total (USD)" },
+              ticks: {
+                callback: v => {
+                  return Number(v).toLocaleString("en-US", { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+                }
+              }
+            },
+            x: {
+              title: { display: true, text: "Fecha" }
+            }
+          }
+        }
+      });
+    } catch (e) {
+      console.error(e);
+      errorDiv.textContent = "Error al consultar la serie temporal.";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    initDateSlicer();
+  });
   </script>
 </body>
 </html>
